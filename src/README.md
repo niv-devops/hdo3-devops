@@ -25,6 +25,12 @@ Welcome to **Floopy Bird**, a delightful clone of the classic **Flappy Bird** ga
    docker build -t floopy-bird .
    ```
    
+2. Run a MongoDB container:
+
+   ```bash
+   docker run -p 27017:27017 mongo
+   ```
+   
 3. Run the container:
    ```bash
    docker run -p 3000:3000 floopy-bird
