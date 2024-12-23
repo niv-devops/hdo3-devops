@@ -21,24 +21,28 @@ Welcome to **Floopy Bird**, a delightful clone of the classic **Flappy Bird** ga
 #### Using the Dockerfile
 
 1. Build the Docker image:
-   bash
+   ```bash
    docker build -t floopy-bird .
+   ```
    
-2. Run the container:
-   bash
+3. Run the container:
+   ```bash
    docker run -p 3000:3000 floopy-bird
+   ```
    
    The game will be accessible at `http://localhost:3000`.
 
 #### With MongoDB for Persistent Leaderboards
 
 1. Build the Docker image with a remote MongoDB connection:
-   bash
+   ```bash
    docker build -t floopy-bird --build-arg MONGO_URI="<your_mongo_uri>" .
+   ```
    
-2. Run the container:
-   bash
+3. Run the container:
+   ```bash
    docker run -p 3000:3000 floopy-bird
+   ```
    
 
 ### 3. Using `docker-compose`
@@ -46,10 +50,11 @@ Welcome to **Floopy Bird**, a delightful clone of the classic **Flappy Bird** ga
 A `docker-compose.yaml` file is included for quick setup with a local MongoDB database:
 
 1. Start the services:
-   bash
+   '''bash
    docker-compose up
+   '''
    
-2. Access the game at `http://localhost:3000`.
+3. Access the game at `http://localhost:3000`.
 
 ## 🔧 Customization and Development
 
