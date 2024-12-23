@@ -1,0 +1,15 @@
+services:
+  nginx:
+    image: nginx:latest
+    container_name: nginx-reverse-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./domain.crt:/etc/nginx/ssl/domain.crt:ro
+      - ./domain.key:/etc/nginx/ssl/domain.key:ro
+    restart: always
+
+networks:
+  host: {}

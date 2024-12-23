@@ -1,0 +1,190 @@
+pipeline {
+    agent any
+    
+    options {
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        IMAGE_NAME_DEV = "flappybird-development"
+        IMAGE_NAME_PROD = "flappybird-production"
+        CONTAINER_REPO = 'nexus.hdo3.local/'
+        CONTAINER_REPO_CREDENTIALS = 'nexus'
+    }
+
+    stages {
+        stage('Clean workspace & checkout SCM') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout SCM') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install Dependencies') {
+            when {
+                not { branch 'main' }
+            }
+            steps {
+                script {
+                    sh '''
+                    apt-get update && apt-get install -y curl wget
+                    ln -s /usr/bin/python3 /usr/bin/python || true
+                    wget -O /bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+                    chmod +x /bin/hadolint
+                    '''
+                }
+            }
+        }
+
+        stage('Connect to Cluster') {
+            when {
+                not { branch 'main' }
+            }
+            steps {
+                withKubeConfig([credentialsId: 'jenkins-robot-token', serverUrl: 'https://10.4.0.10:6443', namespace: 'qa']) {
+                    sh '''
+                    curl -LO "https://storage.googleapis.com/kubernetes-release/release/v1.20.5/bin/linux/amd64/kubectl"
+                    chmod u+x ./kubectl
+                    ./kubectl get pods -n qa
+                    '''
+                }
+            }
+        }
+        
+        stage('SonarQube Analysis') {
+            when {
+                not { branch 'main' }
+            }
+            steps {
+                script {
+                    def scannerHome = tool name: 'sonarqube'
+                    withSonarQubeEnv('sonarqube') {
+                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectBaseDir=${WORKSPACE}/src"
+                    }
+                }
+            }
+        }
+        
+        /*
+        stage('Run Unit Tests') {
+            when {
+                not { branch 'main' }
+            }
+            steps {
+                script {
+                    sh '''
+                    python3 -m venv venv
+                    . venv/bin/activate
+                    pip install -r src/requirements.txt
+                    python3 -m unittest discover -s src/tests -p "*.py"
+                    '''
+                }
+            }
+        }
+        */
+
+        stage('Hadolint Dockerfile') {
+            when {
+                not { branch 'main' }
+            }
+            steps {
+                script {
+                    sh '''
+                    hadolint src/Dockerfile || true
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            when {
+                not { branch 'main' }
+            }
+            steps {
+                script {
+                    docker.build("${env.IMAGE_NAME_DEV}", "src")
+                }
+            }
+        }
+        /*
+        stage('Health Check Docker Container') {
+            when {
+                not { branch 'main' }
+            }
+            steps {
+                script {
+                    sh '''
+                    if docker ps -a --format '{{.Names}}' | grep -q '^flappybird_healthcheck$'; then
+                        docker rm -f flappybird_healthcheck
+                    fi
+                    docker network create goofy-network || true
+                    docker run -d --name flappybird_healthcheck --network goofy-network ${IMAGE_NAME}
+                    sleep 5
+                    CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' flappybird_healthcheck)
+                    echo "Container IP: $CONTAINER_IP"
+                    curl --fail http://$CONTAINER_IP:3000 || (echo "Health check failed!" && exit 1)
+                    docker stop flappybird_healthcheck
+                    docker rm flappybird_healthcheck
+                    '''
+                }
+            }
+        }
+        */
+        stage('Push Docker Image to Dev Repo') {
+            when {
+                not { branch 'main' }
+            }
+            steps {
+                script {
+                    def gitCommit = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    docker.withRegistry("https://${env.CONTAINER_REPO}", "${env.CONTAINER_REPO_CREDENTIALS}") {
+                        docker.image("${env.IMAGE_NAME_DEV}").push('latest')
+                        docker.image("${env.IMAGE_NAME_DEV}").push(gitCommit)
+                    }
+                }
+            }
+        }
+
+        stage('Promote to Production') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    def gitCommit = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    docker.withRegistry("https://${env.CONTAINER_REPO}", "${env.CONTAINER_REPO_CREDENTIALS}") {
+                        sh "docker pull ${env.CONTAINER_REPO}${env.IMAGE_NAME_DEV}:latest"
+                        sh "docker tag ${env.CONTAINER_REPO}${env.IMAGE_NAME_DEV}:latest ${env.CONTAINER_REPO}${env.IMAGE_NAME_PROD}:latest"
+                        sh "docker tag ${env.CONTAINER_REPO}${env.IMAGE_NAME_DEV}:latest ${env.CONTAINER_REPO}${env.IMAGE_NAME_PROD}:${gitCommit}"
+                        sh "docker push ${env.CONTAINER_REPO}${env.IMAGE_NAME_PROD}:latest"
+                        sh "docker push ${env.CONTAINER_REPO}${env.IMAGE_NAME_PROD}:${gitCommit}"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                def gitCommit = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                def slackMessage = "Build-Test-Publish for branch ${BRANCH_NAME} (Image tag: #${env.BUILD_NUMBER} | Commit: ${gitCommit}) completed successfully! :tada:"
+                if (BRANCH_NAME == 'main') {
+                    slackMessage += "\nClick here to deploy to production: http://10.4.0.19:8080/job/production/build?token=goofy-the-deployer"
+                }
+                slackSend(channel: '#devops-fifeline', message: slackMessage)
+            }
+        }
+        failure {
+            slackSend(channel: '#devops-fifeline', message: "Build-Test-Publish for branch ${BRANCH_NAME} failed :cry:")
+        }
+        aborted {
+            slackSend(channel: '#devops-fifeline', message: "Build-Test-Publish for branch ${BRANCH_NAME} aborted :confused:")
+        }
+    }
+}

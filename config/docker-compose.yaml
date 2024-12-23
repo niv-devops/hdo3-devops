@@ -1,0 +1,172 @@
+services:
+  vault:
+    image: hashicorp/vault:1.18.2
+    container_name: vault
+    ports:
+      - "8200:8200"
+      - "8201:8201"
+    environment:
+      - VAULT_ADDR=http://0.0.0.0:8200
+      - VAULT_API_ADDR=http://0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - vault-data:/data
+      - ./config.hcl:/vault/config/config.hcl
+      - ./domain.crt:/vault/ssl/domain.crt
+      - ./domain.key:/vault/ssl/domain.key
+    entrypoint: vault server -config /vault/config/config.hcl
+    restart: always
+    networks:
+      - goofy-network
+
+  gitlab:
+    image: gitlab/gitlab-ce:17.6.1-ce.0
+    container_name: gitlab
+    restart: always
+    hostname: 10.4.0.19
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://10.4.0.19'
+    ports:
+      - "9090:80"
+      - "443:443"
+      - "2222:22"
+    volumes:
+      - gitlab_data:/var/opt/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_config:/etc/gitlab
+    networks:
+      - goofy-network
+
+  jenkins:
+    image: jenkins:withdocker
+    container_name: jenkins
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - jenkins-docker-certs:/certs/client
+    restart: unless-stopped
+    networks:
+      - goofy-network
+    depends_on:
+      - docker
+    environment:
+      DOCKER_HOST: tcp://docker:2376
+      DOCKER_CERT_PATH: /certs/client
+      DOCKER_TLS_VERIFY: 1
+    privileged: true
+    user: root
+
+  sonarqube:
+    image: sonarqube:lts-community
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    ports:
+      - "9000:9000"
+    networks:
+      - goofy-network
+
+  db:
+    image: postgres:12
+    container_name: db
+    restart: always
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+      POSTGRES_DB: sonar
+    volumes:
+      - postgresql:/var/lib/postgresql
+      - postgresql_data:/var/lib/postgresql/data
+    networks:
+      - goofy-network
+
+  docker:
+    image: docker:dind
+    container_name: docker-in-docker
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+    ports:
+      - "2376:2376"
+    volumes:
+      - jenkins-docker-certs:/certs/client
+      - jenkins-data:/var/jenkins_home
+      - ./domain.crt:/etc/docker/certs.d/nexus.hdo3.local/ca.crt:ro
+    extra_hosts:
+      - "nexus.hdo3.local:10.4.0.9"
+    networks:
+      - goofy-network
+    restart: unless-stopped
+
+  nexus:
+    image: sonatype/nexus3:3.75.1-alpine
+    container_name: nexus
+    ports:
+      - "8081:8081"
+      - "8085:8085"
+      - "8443:8443"
+    volumes:
+      - nexus-data:/nexus-data
+    networks:
+      - goofy-network
+    restart: unless-stopped
+
+networks:
+  goofy-network:
+    name: goofy_goofy-network
+    external: true
+    driver: bridge
+
+volumes:
+  vault-data:
+    name: goofy_vault-data
+    external: true
+  gitlab_data:
+    name: goofy_gitlab_data
+    external: true
+  gitlab_logs:
+    name: goofy_gitlab_logs
+    external: true
+  gitlab_config:
+    name: goofy_gitlab_config
+    external: true
+  jenkins_home:
+    name: goofy_jenkins_home
+    external: true
+  jenkins-docker-certs:
+    name: goofy_jenkins-docker-certs
+    external: true
+  jenkins-data:
+    name: goofy_jenkins-data
+    external: true
+  sonarqube_data:
+    name: goofy_sonarqube_data
+    external: true
+  sonarqube_extensions:
+    name: goofy_sonarqube_extensions
+    external: true
+  sonarqube_logs:
+    name: goofy_sonarqube_logs
+    external: true
+  postgresql:
+    name: goofy_postgresql
+    external: true
+  postgresql_data:
+    name: goofy_postgresql_data
+    external: true
+  nexus-data:
+    name: goofy_nexus-data
+    external: true

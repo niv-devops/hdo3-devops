@@ -1,0 +1,39 @@
+---
+- name: Install Helm on Debian-based system
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update apt repository
+      apt:
+        update_cache: yes
+
+    - name: Install required dependencies (curl, gnupg)
+      apt:
+        name:
+          - curl
+          - gnupg
+        state: present
+
+    - name: Download Helm signing key using curl
+      command: curl -fsSL https://baltocdn.com/helm/signing.asc -o /tmp/helm-signing.asc
+
+    - name: Add Helm GPG key
+      command: gpg --dearmor -o /usr/share/keyrings/helm.gpg /tmp/helm-signing.asc
+      args:
+        creates: /usr/share/keyrings/helm.gpg
+
+    - name: Add Helm repository to APT sources list
+      lineinfile:
+        path: /etc/apt/sources.list.d/helm-stable-debian.list
+        line: "deb [signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main"
+        create: yes
+
+    - name: Update apt repository after adding Helm repo
+      apt:
+        update_cache: yes
+
+    - name: Install Helm
+      apt:
+        name: helm
+        state: present
+

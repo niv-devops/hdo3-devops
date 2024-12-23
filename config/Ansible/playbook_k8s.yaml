@@ -1,0 +1,91 @@
+---
+- name: Kubernetes and CRI-O Setup
+  hosts: all
+  become: true
+  vars:
+    kubernetes_version: "v1.31"
+    crio_version: "v1.30"
+  tasks:
+    - name: Create keyrings directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Install dependencies
+      ansible.builtin.apt:
+        name:
+          - software-properties-common
+          - curl
+          - gpg
+        state: present
+        update_cache: true
+
+    - name: Download Kubernetes APT key
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/deb/Release.key"
+        dest: /tmp/kubernetes.key
+        mode: '0644'
+
+    - name: Import Kubernetes APT key
+      ansible.builtin.command:
+        cmd: "gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /tmp/kubernetes.key"
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Add Kubernetes repository
+      ansible.builtin.copy:
+        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/deb/ /\n"
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        mode: '0644'
+
+    - name: Download CRI-O APT key
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/addons:/cri-o:/stable:/{{ crio_version }}/deb/Release.key"
+        dest: /tmp/crio.key
+        mode: '0644'
+
+    - name: Import CRI-O APT key
+      ansible.builtin.command:
+        cmd: "gpg --dearmor -o /etc/apt/keyrings/cri-o-apt-keyring.gpg /tmp/crio.key"
+      args:
+        creates: /etc/apt/keyrings/cri-o-apt-keyring.gpg
+
+    - name: Add CRI-O repository
+      ansible.builtin.copy:
+        content: "deb [signed-by=/etc/apt/keyrings/cri-o-apt-keyring.gpg] https://pkgs.k8s.io/addons:/cri-o:/stable:/{{ crio_version }}/deb/ /\n"
+        dest: /etc/apt/sources.list.d/cri-o.list
+        mode: '0644'
+
+    - name: Install Kubernetes packages
+      ansible.builtin.apt:
+        name:
+          - cri-o
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        update_cache: true
+
+    - name: Start and enable CRI-O service
+      ansible.builtin.systemd:
+        name: crio
+        state: started
+        enabled: true
+
+    - name: Disable swap
+      ansible.builtin.command:
+        cmd: swapoff -a
+      changed_when: false
+
+    - name: Load br_netfilter module
+      community.general.modprobe:
+        name: br_netfilter
+        state: present
+
+    - name: Enable IP forwarding
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        state: present
+        reload: true

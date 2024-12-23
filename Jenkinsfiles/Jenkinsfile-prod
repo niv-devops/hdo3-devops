@@ -1,0 +1,123 @@
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        IMAGE_NAME = "flappybird-production"
+        K8S_MANIFESTS_REPO = 'http://10.4.0.19:9090/hdo3/k8s-manifests.git'
+        CONTAINER_REPO = 'nexus.hdo3.local/flappybird-production'
+    }
+
+    stages {
+        stage('Check if Triggered Manually') {
+            steps {
+                script {
+                    def manualTrigger = currentBuild.getBuildCauses().any { cause -> cause._class.contains("UserIdCause") }
+                    if (!manualTrigger) {
+                        error("The pipeline was not triggered manually, Aborting...")
+                    }
+                }
+            }
+        }
+    
+        stage('Clean workspace & checkout SCM') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Clone k8s-manifests Repository') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'gitlab-jenkins-user',
+                        usernameVariable: 'GIT_USERNAME',
+                        passwordVariable: 'GIT_PASSWORD'
+                    )]) {
+                        sh '''
+                        git clone http://${GIT_USERNAME}:${GIT_PASSWORD}@10.4.0.19:9090/hdo3/k8s-manifests.git manifests
+                        cd manifests
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh '''
+                sudo wget -O /usr/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.6/yq_linux_amd64
+                sudo chmod +x /usr/bin/yq
+                '''
+            }
+        }
+
+        stage('Configure Git') {
+            steps {
+                script {
+                    sh '''
+                    cd manifests
+                    git config user.name "Jenkins CI"
+                    git config user.email "jenkins@ci.local"
+                    '''
+                }
+            }
+        }
+
+        stage('Update Deployment YAML') {
+            steps {
+                script {
+                    sh """
+                    cd manifests
+                    yq e '.deployment.floopybird.containers.image = "${env.CONTAINER_REPO}:${params.RELEASE_TAG}"' -i application/values.yaml || true
+                    git add application/values.yaml
+                    """
+                }
+            }
+        }
+
+        stage('Commit and Push Changes') {
+            steps {
+                script {
+                    sh """
+                    cd manifests
+                    git commit -m "Update floopybird container image to ${CONTAINER_REPO}:${params.RELEASE_TAG}"
+                    git push
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            slackSend(
+                channel: '#devops-fifeline',
+                color: 'good',
+                message: "Deployment of image tag '${params.RELEASE_TAG}' succeeded. Goofy is happy. :tada:",
+                attachments: [
+                    [
+                        image_url: 'https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExa3h5dGp0bW4zMWRtempoajV6dWU1Nm1yemtzaHg4YjA4dnNjMXBobSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/XreQmk7ETCak0/giphy.gif',
+                        alt_text: 'Goofy happy gif'
+                    ]
+                ]
+            )
+        }
+        failure {
+            slackSend(
+                channel: '#devops-fifeline',
+                color: 'danger',
+                message: "Deployment of image tag '${params.RELEASE_TAG}' failed. Goofy is sad. :cry:",
+                attachments: [
+                    [
+                        image_url: 'https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExYWxqM3gwY2lnYngzYTYxZHVuM2VrMWp5ZGFnNjM5aGJjcGQ1YjJ1NCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/in6mnJNYjGKpq/giphy.gif',
+                        alt_text: 'Goofy sad gif'
+                    ]
+                ]
+            )
+        }
+    }
+}
