@@ -127,6 +127,7 @@ The main application is configured with:
 - MongoDB metrics enabled with ServiceMonitor
 - Grafana dashboards available at grafana.hdo3.local
 - Application metrics collection configured
+- Loki readme -[Loki](Loki.md)
 
 ## Network Architecture
 
